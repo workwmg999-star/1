@@ -1,0 +1,1033 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#0b0e14">
+<title>الماسح الضوئي</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  :root {
+    --bg: #0b0e14;
+    --panel: #141924;
+    --panel2: #1c2230;
+    --line: #262d3d;
+    --text: #eef1f7;
+    --muted: #8b94a7;
+    --green: #22c55e;
+    --green-dark: #16a34a;
+    --amber: #f59e0b;
+  }
+  html, body { height: 100%; }
+  body {
+    font-family: "Segoe UI", "Inter", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    overscroll-behavior: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  /* ---------- Scan stage ---------- */
+  #stage {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+  }
+
+  .cam-wrap {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    background: #000;
+    overflow: hidden;
+  }
+  #cam, #still {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+  #overlay {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    touch-action: none;
+    z-index: 5;
+  }
+
+  .empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    color: var(--muted);
+    font-size: 15px;
+    padding: 24px;
+    background: radial-gradient(circle at 50% 40%, #16202e, #0b0e14 70%);
+    z-index: 2;
+  }
+  .empty .big { display: block; font-size: 46px; margin-bottom: 12px; }
+
+  .status {
+    position: absolute;
+    top: 76px;
+    right: 50%;
+    transform: translateX(50%);
+    z-index: 8;
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    background: rgba(20, 25, 36, 0.85);
+    border: 1px solid var(--line);
+    color: var(--muted);
+    backdrop-filter: blur(4px);
+    max-width: calc(100% - 64px);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .scan-top { position:absolute; z-index:9; top:18px; left:18px; right:18px; display:flex; align-items:center; justify-content:space-between; direction:ltr; }
+  .round-control { width:48px; height:48px; padding:0; border:0; border-radius:50%; background:rgba(255,255,255,.95); color:#15171d; display:grid; place-items:center; font-size:22px; box-shadow:0 5px 16px rgba(0,0,0,.22); }
+  .scan-title { color:#fff; font-weight:700; font-size:15px; text-shadow:0 1px 3px #000; direction:rtl; }
+  .status.ok { color: var(--green); border-color: rgba(34,197,94,.4); }
+  .status.warn { color: var(--amber); border-color: rgba(245,158,11,.4); }
+  .status.busy { color: var(--muted); }
+
+  .toolbar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
+    background: var(--panel);
+    border-top: 1px solid var(--line);
+    z-index: 10;
+  }
+  .toolbar button { flex: 1 1 120px; }
+  button {
+    font-family: inherit;
+    border: 1px solid var(--line);
+    background: var(--panel2);
+    color: var(--text);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 13.5px;
+    font-weight: 600;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+  button:active { transform: scale(.97); }
+  button.primary { background: var(--green); border-color: var(--green); color: #06240f; }
+  button.on { background: var(--green); border-color: var(--green); color: #06240f; }
+
+  #btnRedo { margin-right: auto; margin-left: auto; }
+
+  /* ---------- Floating action button (pencil = confirm crop) ---------- */
+  #fab {
+    position: absolute;
+    bottom: 96px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 20;
+    width: 74px;
+    height: 74px;
+    border-radius: 50%;
+    border: none;
+    background: linear-gradient(135deg, #22c55e, #16a34a);
+    box-shadow: 0 6px 20px rgba(34,197,94,.35);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #06240f;
+    opacity: .55;
+    transition: opacity .15s, transform .15s;
+  }
+  #fab.ready { opacity: 1; }
+  #fab.ready::after { content:'تأكيد القص'; position:absolute; top:80px; color:#fff; background:rgba(0,0,0,.58); white-space:nowrap; padding:5px 10px; border-radius:999px; font-size:12px; font-weight:700; }
+  #fab.busy { pointer-events: none; opacity: .4; }
+  #fab svg { width: 26px; height: 26px; }
+
+  /* ---------- Result stage ---------- */
+  #result {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    z-index: 40;
+  }
+  #result[hidden] { display: none; }
+  .out-wrap {
+    flex: 1;
+    min-height: 0;
+    background: #000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 12px;
+  }
+  #out {
+    max-width: 100%;
+    max-height: 100%;
+    border-radius: 6px;
+    box-shadow: 0 8px 30px rgba(0,0,0,.5);
+  }
+  .rtoolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 12px 14px calc(16px + env(safe-area-inset-bottom));
+    background: var(--panel);
+    border-top: 1px solid var(--line);
+  }
+  .rtoolbar button { flex: 1; min-width: 72px; }
+  #btnDownload { background: var(--green); border-color: var(--green); color: #06240f; }
+
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+
+  <!-- Scan stage: camera / still + overlay + toolbar + FAB -->
+  <div id="stage">
+    <div class="cam-wrap">
+      <video id="cam" autoplay playsinline muted></video>
+      <canvas id="still"></canvas>
+      <div class="scan-top">
+        <button class="round-control" type="button" onclick="history.back()" aria-label="رجوع">‹</button>
+        <div class="scan-title">امسح المستند</div>
+        <button class="round-control" type="button" id="btnTopFile" aria-label="المعرض">▧</button>
+      </div>
+      <div class="empty" id="empty" hidden>
+        <div><span class="big">📷</span>اضغط «اختر صورة» لفتح الكاميرا أو اختيار ملف</div>
+      </div>
+      <canvas id="overlay"></canvas>
+      <div id="status" class="status">…</div>
+    </div>
+
+    <div class="toolbar">
+      <button id="btnDetect" class="on">● الكشف التلقائي</button>
+      <button id="btnCamera">📷 الكاميرا</button>
+      <button id="btnFile">🖼 المعرض</button>
+      <button id="btnRedo" hidden>↺ إعادة الكشف</button>
+      <input type="file" id="cameraInput" accept="image/*" capture="environment" hidden>
+      <input type="file" id="fileInput" accept="image/*" hidden>
+    </div>
+  </div>
+
+  <button id="fab" aria-label="تأكيد الإطار" title="تأكيد وقصّ">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
+      <path d="m15 5 4 4"/>
+    </svg>
+  </button>
+
+  <!-- Result stage -->
+  <div id="result" hidden>
+    <div class="out-wrap">
+      <canvas id="out"></canvas>
+    </div>
+    <div class="rtoolbar">
+      <button id="btnBack">↩ رجوع</button>
+      <button id="btnOriginal">الأصل</button>
+      <button id="btnClean">تصحيح الخلفية</button>
+      <button id="btnColor">الحفاظ على الألوان</button>
+      <button id="btnBw">أبيض/أسود</button>
+      <button id="btnDownload">⬇ تحميل PNG</button>
+      <button id="btnSave" class="primary">☁ حفظ في المستندات</button>
+    </div>
+  </div>
+
+  <script>
+/**
+ * main.js — UI orchestration for the document scanner.
+ *
+ * Responsibilities:
+ *   - Camera access (getUserMedia) with graceful fallback to a file input
+ *     (HTTP-from-phone does not allow the camera API, so we fall back to the
+ *     native capture UI).
+ *   - Live detection loop (throttled) that renders the dark overlay, green
+ *     quadrilateral and four circular draggable handles.
+ *   - Touch / mouse dragging of the handles with snap-to-edge assistance.
+ *   - Floating action button (pencil) to confirm -> perspective warp in the
+ *     worker -> result screen with enhancement presets + PNG download.
+ *
+ * Geometry model: corners are kept NORMALIZED (0..1) relative to the source
+ * frame, so live low-res detection and full-res capture share one coordinate
+ * system. Actual pixel corners are derived at capture / warp time.
+ */
+'use strict';
+
+/* ------------------------------------------------------------------ *
+ * State
+ * ------------------------------------------------------------------ */
+const state = {
+  worker: null,
+  stream: null,
+  rafId: null,
+
+  live: false,                 // camera preview is running
+  sourceCanvas: null,          // offscreen full-res copy of the current frame/photo
+  sourceW: 0,
+  sourceH: 0,
+  originalResult: null,        // unmodified result for non-destructive adjustments
+
+  normCorners: null,           // Array<[nx, ny]> 0..1 — [TL, TR, BR, BL]
+  lastLines: null,             // Array<{ax,ay,bx,by}> normalized edge lines (for snapping)
+  cornersEdited: false,
+
+  activeHandle: -1,            // index of the handle being dragged
+  detecting: false,            // a detection request is in flight
+  lastDetectAt: 0,
+  seq: 0,                      // worker request id
+
+  // Auto-capture on stability (OSS AutoScanHandler behavior).
+  lastStableCorners: null,     // normalized corners of the previous detection
+  stableSince: 0,              // ms timestamp when the corners went stable
+  autoCapFired: false,         // one-shot guard so we capture once per hold
+};
+
+const SNAP_PX = 16;            // snap radius on the overlay canvas, in px
+const HANDLE_R = 18;           // handle radius on the overlay canvas, in px
+const LIVE_DETECT_MS = 220;    // throttle between live detections
+const STABLE_MS = 900;         // how long the quad must stay still before auto-capture
+const STABLE_DISP = 0.02;      // max normalized corner movement to count as "still"
+
+/* ------------------------------------------------------------------ *
+ * DOM refs
+ * ------------------------------------------------------------------ */
+const $ = (id) => document.getElementById(id);
+const el = {
+  stage: $('stage'),
+  cam: $('cam'),
+  still: $('still'),
+  overlay: $('overlay'),
+  empty: $('empty'),
+  status: $('status'),
+  btnDetect: $('btnDetect'),
+  btnCamera: $('btnCamera'),
+  btnFile: $('btnFile'),
+  btnTopFile: $('btnTopFile'),
+  cameraInput: $('cameraInput'),
+  fileInput: $('fileInput'),
+  btnRedo: $('btnRedo'),
+  fab: $('fab'),
+  fabIcon: $('fabIcon'),
+
+  result: $('result'),
+  out: $('out'),
+  btnBack: $('btnBack'),
+  btnOriginal: $('btnOriginal'),
+  btnClean: $('btnClean'),
+  btnColor: $('btnColor'),
+  btnBw: $('btnBw'),
+  btnDownload: $('btnDownload'),
+  btnSave: $('btnSave'),
+};
+
+const overlayCtx = el.overlay.getContext('2d');
+const stillCtx = el.still.getContext('2d');
+
+/* ------------------------------------------------------------------ *
+ * Worker messaging
+ * ------------------------------------------------------------------ */
+initWorker();
+
+/** Create the worker and expose a promisified send. */
+function initWorker() {
+  const blob = new Blob(["/**\n * utils.js — shared math + image primitives for the browser document scanner.\n *\n * Loaded BOTH by the main thread (classic <script> tag) and by the Web Worker\n * (importScripts('utils.js')). Pure functions only — no DOM access, no globals\n * beyond the exported names, so the same code runs identically in both worlds.\n *\n * Sections:\n *   1. Scalar / vector helpers\n *   2. Grayscale + blur + gradients + integral images\n *   3. Connected components (union-find) for background segmentation\n *   4. Convex hull, quad approximation, aspect validation, corner ordering\n *   5. Shi-Tomasi corner refinement\n *   6. Homography (DLT + Gaussian elimination) and perspective warp\n *   7. Otsu threshold (for the Arabic binarization preset)\n */\n\n/* ------------------------------------------------------------------ *\n * 1. Scalar / vector helpers\n * ------------------------------------------------------------------ */\n\n/**\n * Clamp v into [lo, hi].\n * @param {number} v\n * @param {number} lo\n * @param {number} hi\n * @returns {number}\n */\nfunction clamp(v, lo, hi) {\n  return v < lo ? lo : v > hi ? hi : v;\n}\n\n/**\n * Squared Euclidean distance (avoids Math.sqrt when only comparing).\n * @returns {number}\n */\nfunction dist2(ax, ay, bx, by) {\n  const dx = ax - bx, dy = ay - by;\n  return dx * dx + dy * dy;\n}\n\n/**\n * Euclidean distance.\n * @returns {number}\n */\nfunction dist(ax, ay, bx, by) {\n  return Math.sqrt(dist2(ax, ay, bx, by));\n}\n\n/** Perpendicular distance from point P to infinite line through A-B. */\nfunction pointLineDist(px, py, ax, ay, bx, by) {\n  const dx = bx - ax, dy = by - ay;\n  const len = Math.hypot(dx, dy) || 1e-6;\n  return Math.abs(dx * (py - ay) - dy * (px - ax)) / len;\n}\n\n/** Project point P onto the infinite line through A-B. @returns {{x:number,y:number}} */\nfunction projectOnLine(px, py, ax, ay, bx, by) {\n  const dx = bx - ax, dy = by - ay;\n  const t = ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy || 1e-6);\n  return { x: ax + t * dx, y: ay + t * dy };\n}\n\n/* ------------------------------------------------------------------ *\n * 2. Grayscale, blur, gradients, integral images\n * ------------------------------------------------------------------ */\n\n/**\n * Convert an RGBA byte array (Uint8ClampedArray) to a luminance plane using\n * Rec.601 weights. @returns {Float32Array} length w*h, values 0..255.\n */\nfunction toLuminance(data, w, h) {\n  const lum = new Float32Array(w * h);\n  for (let i = 0, p = 0; i < data.length; i += 4, p++) {\n    lum[p] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];\n  }\n  return lum;\n}\n\n/**\n * In-place box blur, two separable passes. O(n) sliding-window means it is\n * very cheap even at 1080p, and it suppresses fine background texture (e.g.\n * floor tiles) before edge detection.\n * @param {Float32Array} lum mutated in place\n * @param {number} w\n * @param {number} h\n * @param {number} radius blur radius in pixels\n * @returns {Float32Array} same array\n */\nfunction boxBlur(lum, w, h, radius) {\n  const r = Math.max(1, Math.round(radius));\n  const tmp = new Float32Array(w * h);\n  const span = 2 * r + 1;\n\n  // Horizontal pass.\n  for (let y = 0; y < h; y++) {\n    const row = y * w;\n    let acc = 0;\n    for (let x = -r; x <= r; x++) acc += lum[row + clamp(x, 0, w - 1)];\n    for (let x = 0; x < w; x++) {\n      tmp[row + x] = acc / span;\n      acc += lum[row + clamp(x + r + 1, 0, w - 1)] - lum[row + clamp(x - r, 0, w - 1)];\n    }\n  }\n  // Vertical pass.\n  for (let x = 0; x < w; x++) {\n    let acc = 0;\n    for (let y = -r; y <= r; y++) acc += tmp[clamp(y, 0, h - 1) * w + x];\n    for (let y = 0; y < h; y++) {\n      lum[y * w + x] = acc / span;\n      acc += tmp[clamp(y + r + 1, 0, h - 1) * w + x] - tmp[clamp(y - r, 0, h - 1) * w + x];\n    }\n  }\n  return lum;\n}\n\n/**\n * Sobel gradients (3x3, border-safe). Used both for edge evidence and as the\n * input to the Shi-Tomasi corner refinement.\n * @param {Float32Array} lum\n * @param {number} w\n * @param {number} h\n * @returns {{mag:Float32Array, gx:Float32Array, gy:Float32Array}}\n */\nfunction sobel(lum, w, h) {\n  const mag = new Float32Array(w * h);\n  const gx = new Float32Array(w * h);\n  const gy = new Float32Array(w * h);\n  for (let y = 1; y < h - 1; y++) {\n    for (let x = 1; x < w - 1; x++) {\n      const i = y * w + x;\n      const sx =\n        -lum[i - w - 1] + lum[i - w + 1] -\n        2 * lum[i - 1] + 2 * lum[i + 1] -\n        lum[i + w - 1] + lum[i + w + 1];\n      const sy =\n        -lum[i - w - 1] - 2 * lum[i - w] - lum[i - w + 1] +\n        lum[i + w - 1] + 2 * lum[i + w] + lum[i + w + 1];\n      gx[i] = sx;\n      gy[i] = sy;\n      // sqrt is ~3x faster than Math.hypot at this scale\n      mag[i] = Math.sqrt(sx * sx + sy * sy);\n    }\n  }\n  return { mag, gx, gy };\n}\n\n/**\n * Integral image for O(1) local-window sums (used by local-mean shadow\n * removal and by the adaptive \"bright = paper\" mask).\n * @returns {Float64Array} w*h running sums\n */\nfunction integralImage(lum, w, h) {\n  const sum = new Float64Array(w * h);\n  for (let y = 0; y < h; y++) {\n    for (let x = 0; x < w; x++) {\n      const i = y * w + x;\n      const a = x > 0 ? sum[i - 1] : 0;\n      const b = y > 0 ? sum[i - w] : 0;\n      const c = (x > 0 && y > 0) ? sum[i - w - 1] : 0;\n      sum[i] = lum[i] + a + b - c;\n    }\n  }\n  return sum;\n}\n\n/**\n * Local mean of luminance inside a square window of `radius` around every\n * pixel, computed from an integral image. This is the lighting model used by\n * the shadow-removal step: paper brightness varies slowly, shadows are wide,\n * so a ~15%-of-image window separates ink from lighting.\n * @returns {Float32Array} w*h local means\n */\nfunction localMean(lum, w, h, sum, radius) {\n  const mean = new Float32Array(w * h);\n  const r = Math.max(1, Math.round(radius));\n  for (let y = 0; y < h; y++) {\n    const y0 = clamp(y - r, 0, h - 1);\n    const y1 = clamp(y + r, 0, h - 1);\n    const rowH = y1 - y0 + 1;\n    for (let x = 0; x < w; x++) {\n      const x0 = clamp(x - r, 0, w - 1);\n      const x1 = clamp(x + r, 0, w - 1);\n      const i = y * w + x;\n      const s =\n        sum[y1 * w + x1] -\n        (x0 > 0 ? sum[y1 * w + x0 - 1] : 0) -\n        (y0 > 0 ? sum[(y0 - 1) * w + x1] : 0) +\n        ((x0 > 0 && y0 > 0) ? sum[(y0 - 1) * w + x0 - 1] : 0);\n      mean[i] = s / ((x1 - x0 + 1) * rowH);\n    }\n  }\n  return mean;\n}\n\n/* ------------------------------------------------------------------ *\n * 3. Connected components (8-connectivity, union-find)\n * ------------------------------------------------------------------ */\n\n/**\n * Label connected foreground pixels in a 0/1 mask and return the metadata of\n * every component. Used to isolate the document from a textured background\n * (tiled floor, desk, hands): the paper is usually the largest bright blob.\n * @param {Uint8Array} mask 0/1, length w*h\n * @param {number} w\n * @param {number} h\n * @returns {Array<{id:number, count:number, minX:number, minY:number, maxX:number, maxY:number}>}\n */\nfunction connectedComponents(mask, w, h) {\n  const n = w * h;\n  const parent = new Int32Array(n).fill(-1);\n\n  const find = (a) => {\n    while (parent[a] !== a) {\n      parent[a] = parent[parent[a]];\n      a = parent[a];\n    }\n    return a;\n  };\n  const union = (a, b) => {\n    const ra = find(a), rb = find(b);\n    if (ra !== rb) parent[ra] = rb;\n  };\n\n  // First pass: label + union with already-scanned neighbors.\n  for (let y = 0; y < h; y++) {\n    for (let x = 0; x < w; x++) {\n      const i = y * w + x;\n      if (!mask[i]) continue;\n      parent[i] = i;\n      if (x > 0 && mask[i - 1]) union(i, i - 1);\n      if (y > 0 && mask[i - w]) union(i, i - w);\n      if (y > 0 && x > 0 && mask[i - w - 1]) union(i, i - w - 1);\n      if (y > 0 && x < w - 1 && mask[i - w + 1]) union(i, i - w + 1);\n    }\n  }\n\n  // Second pass: aggregate stats per root.\n  const stats = new Map();\n  for (let y = 0; y < h; y++) {\n    for (let x = 0; x < w; x++) {\n      const i = y * w + x;\n      if (!mask[i]) continue;\n      const root = find(i);\n      let s = stats.get(root);\n      if (!s) {\n        s = { id: root, count: 0, minX: x, minY: y, maxX: x, maxY: y };\n        stats.set(root, s);\n      }\n      s.count++;\n      if (x < s.minX) s.minX = x;\n      if (x > s.maxX) s.maxX = x;\n      if (y < s.minY) s.minY = y;\n      if (y > s.maxY) s.maxY = y;\n    }\n  }\n  return Array.from(stats.values()).sort((a, b) => b.count - a.count);\n}\n\n/**\n * BFS flood fill on the mask starting from any pixel belonging to the target\n * component (seeded by its root index). Returns the component's pixels —\n * feeding them to convexHull() yields the document's outline even when the\n * paper touches a textured background.\n * @param {Uint8Array} mask 0/1, length w*h\n * @param {number} w\n * @param {number} h\n * @param {number} rootId index of a pixel inside the target component\n * @returns {Array<{x:number,y:number}>}\n */\nfunction floodFillPixels(mask, w, h, rootId) {\n  // Recompute labels minimally: union-find again but only to check membership.\n  // To avoid duplicating union-find, we just seed from the bbox center and\n  // flood while pixel value is 1.\n  const n = w * h;\n  const seed = rootId;\n  const pts = [];\n  const visited = new Uint8Array(n);\n  const stack = [seed];\n  visited[seed] = 1;\n  while (stack.length) {\n    const i = stack.pop();\n    pts.push({ x: i % w, y: (i / w) | 0 });\n    const x = i % w, y = (i / w) | 0;\n    if (x > 0) { const j = i - 1; if (!visited[j] && mask[j]) { visited[j] = 1; stack.push(j); } }\n    if (x < w - 1) { const j = i + 1; if (!visited[j] && mask[j]) { visited[j] = 1; stack.push(j); } }\n    if (y > 0) { const j = i - w; if (!visited[j] && mask[j]) { visited[j] = 1; stack.push(j); } }\n    if (y < h - 1) { const j = i + w; if (!visited[j] && mask[j]) { visited[j] = 1; stack.push(j); } }\n    if (y > 0 && x > 0) { const j = i - w - 1; if (!visited[j] && mask[j]) { visited[j] = 1; stack.push(j); } }\n    if (y > 0 && x < w - 1) { const j = i - w + 1; if (!visited[j] && mask[j]) { visited[j] = 1; stack.push(j); } }\n    if (y < h - 1 && x > 0) { const j = i + w - 1; if (!visited[j] && mask[j]) { visited[j] = 1; stack.push(j); } }\n    if (y < h - 1 && x < w - 1) { const j = i + w + 1; if (!visited[j] && mask[j]) { visited[j] = 1; stack.push(j); } }\n  }\n  return pts;\n}\n\n/* ------------------------------------------------------------------ *\n * 4. Convex hull, quad approximation, validation, ordering\n * ------------------------------------------------------------------ */\n\n/**\n * Andrew's monotone-chain convex hull.\n * @param {Array<{x:number,y:number}>} pts\n * @returns {Array<{x:number,y:number}>} hull vertices in CCW order\n */\nfunction convexHull(pts) {\n  const p = pts.slice().sort((a, b) => a.x - b.x || a.y - b.y);\n  const cross = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);\n  const lower = [], upper = [];\n  for (const pt of p) {\n    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], pt) <= 0) lower.pop();\n    lower.push(pt);\n  }\n  for (let i = p.length - 1; i >= 0; i--) {\n    const pt = p[i];\n    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], pt) <= 0) upper.pop();\n    upper.push(pt);\n  }\n  lower.pop(); upper.pop();\n  return lower.concat(upper);\n}\n\n/**\n * Approximate a convex hull to a quadrilateral. For a document the hull is a\n * near-rectangle, so the two hull points farthest apart are a diagonal pair\n * and the farthest point from that diagonal on each chain is one of the other\n * two corners. Falls back to the bounding box for degenerate hulls.\n * @param {Array<{x:number,y:number}>} hull\n * @returns {Array<{x:number,y:number}>} 4 corners, order follows hull\n */\nfunction approxQuad(hull) {\n  const n = hull.length;\n  if (n <= 4) return hull;\n\n  let best = -1, A = 0, B = 0;\n  for (let i = 0; i < n; i++) {\n    for (let j = i + 1; j < n; j++) {\n      const d = dist2(hull[i].x, hull[i].y, hull[j].x, hull[j].y);\n      if (d > best) { best = d; A = i; B = j; }\n    }\n  }\n\n  const lineDist = (k) => {\n    const ax = hull[A].x, ay = hull[A].y, bx = hull[B].x, by = hull[B].y;\n    return Math.abs((bx - ax) * (hull[k].y - ay) - (by - ay) * (hull[k].x - ax)) /\n           (Math.hypot(bx - ax, by - ay) || 1);\n  };\n\n  let cIdx = A, dC = -1;\n  for (let k = (A + 1) % n; k !== B; k = (k + 1) % n) {\n    const d = lineDist(k);\n    if (d > dC) { dC = d; cIdx = k; }\n  }\n  let dIdx = B, dD = -1;\n  for (let k = (B + 1) % n; k !== A; k = (k + 1) % n) {\n    const d = lineDist(k);\n    if (d > dD) { dD = d; dIdx = k; }\n  }\n\n  if (dC <= 0 || dD <= 0) {\n    const xs = hull.map((p) => p.x), ys = hull.map((p) => p.y);\n    return [\n      { x: Math.min(...xs), y: Math.min(...ys) },\n      { x: Math.max(...xs), y: Math.min(...ys) },\n      { x: Math.max(...xs), y: Math.max(...ys) },\n      { x: Math.min(...xs), y: Math.max(...ys) },\n    ];\n  }\n\n  return [hull[A], hull[cIdx], hull[B], hull[dIdx]];\n}\n\n/**\n * Aspect-ratio guard: rejects slivers and frame-hugging diagonals caused by\n * bad lighting or a background that dominates the image.\n * @param {Array<{x:number,y:number}>} quad\n * @param {number} W image width\n * @param {number} H image height\n * @returns {boolean}\n */\nfunction validateAspect(quad, W, H) {\n  if (!quad || quad.length !== 4) return false;\n  const s = (a, b) => dist(a.x, a.y, b.x, b.y);\n  const sides = [s(quad[0], quad[1]), s(quad[1], quad[2]), s(quad[2], quad[3]), s(quad[3], quad[0])];\n  const long = Math.max(...sides), short = Math.min(...sides);\n  if (short === 0) return false;\n  const ratio = long / short;\n  return ratio > 0.9 && ratio < 9 && short > Math.min(W, H) * 0.25;\n}\n\n/**\n * Order four points as [TL, TR, BR, BL] by angle around the centroid\n * (robust to rotation up to any angle).\n * @param {Array<{x:number,y:number}>} quad\n * @returns {number[4][]} array of [x, y]\n */\nfunction orderCorners(quad) {\n  const cx = quad.reduce((s, p) => s + p.x, 0) / 4;\n  const cy = quad.reduce((s, p) => s + p.y, 0) / 4;\n  return quad\n    .map((p) => ({ p, a: Math.atan2(p.y - cy, p.x - cx) }))\n    .sort((x, y) => x.a - y.a)\n    .map((o) => o.p)\n    .map((p) => [p.x, p.y]);\n}\n\n/* ------------------------------------------------------------------ *\n * 5. Shi-Tomasi corner refinement\n * ------------------------------------------------------------------ */\n\n/**\n * Snap each approximate corner to the strongest corner response inside a\n * small search window. Uses the Shi-Tomasi score (min eigenvalue of the\n * structure tensor). Unlike |gx|*|gy| this stays ~0 along a straight edge and\n * peaks only where two edges meet, so it locks onto the true corner even for\n * rotated or perspective-distorted documents.\n * @param {Float32Array} gx sobel output\n * @param {Float32Array} gy sobel output\n * @param {number} width\n * @param {number} height\n * @param {Array<{x:number,y:number}>} corners approximate corners\n * @param {number} win search window half-size\n * @param {number} N tensor neighborhood half-size (2 => 5x5)\n * @returns {Array<{x:number,y:number}>}\n */\nfunction refineCorners(gx, gy, width, height, corners, win = 16, N = 2) {\n  return corners.map((c) => {\n    const cx = Math.round(c.x), cy = Math.round(c.y);\n    let bx = cx, by = cy, best = -1;\n    const y0 = Math.max(N, cy - win), y1 = Math.min(height - N - 1, cy + win);\n    const x0 = Math.max(N, cx - win), x1 = Math.min(width - N - 1, cx + win);\n    for (let y = y0; y <= y1; y++) {\n      for (let x = x0; x <= x1; x++) {\n        let a = 0, b = 0, c = 0;\n        for (let yy = y - N; yy <= y + N; yy++) {\n          for (let xx = x - N; xx <= x + N; xx++) {\n            const i = yy * width + xx;\n            const gxx = gx[i], gyy = gy[i];\n            a += gxx * gxx;\n            b += gxx * gyy;\n            c += gyy * gyy;\n          }\n        }\n        const disc = Math.sqrt(((a - c) / 2) ** 2 + b * b);\n        const resp = (a + c) / 2 - disc;\n        if (resp > best) { best = resp; bx = x; by = y; }\n      }\n    }\n    return { x: bx, y: by };\n  });\n}\n\n/* ------------------------------------------------------------------ *\n * 6. Homography + perspective warp\n * ------------------------------------------------------------------ */\n\n/**\n * Solve the 3x3 homography mapping src -> dst from 4 correspondences via an\n * 8x8 linear system + Gaussian elimination (partial pivoting).\n * @param {number[4][]} src four source points [x,y]\n * @param {number[4][]} dst four destination points [x,y]\n * @returns {number[]} 9 coefficients, row-major, h[8] === 1\n */\nfunction solveHomography(src, dst) {\n  const A = [], b = [];\n  for (let i = 0; i < 4; i++) {\n    const [x, y] = src[i], [u, v] = dst[i];\n    A.push([x, y, 1, 0, 0, 0, -u * x, -u * y]); b.push(u);\n    A.push([0, 0, 0, x, y, 1, -v * x, -v * y]); b.push(v);\n  }\n  const h = gaussSolve(A, b);\n  return [h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7], 1];\n}\n\n/** Gaussian elimination with partial pivoting for an n x n system. */\nfunction gaussSolve(A, b) {\n  const n = A.length;\n  for (let col = 0; col < n; col++) {\n    let pivot = col;\n    for (let r = col + 1; r < n; r++) if (Math.abs(A[r][col]) > Math.abs(A[pivot][col])) pivot = r;\n    [A[col], A[pivot]] = [A[pivot], A[col]];\n    [b[col], b[pivot]] = [b[pivot], b[col]];\n    for (let r = col + 1; r < n; r++) {\n      const f = A[r][col] / A[col][col];\n      for (let c = col; c < n; c++) A[r][c] -= f * A[col][c];\n      b[r] -= f * b[col];\n    }\n  }\n  const x = new Array(n);\n  for (let r = n - 1; r >= 0; r--) {\n    let s = b[r];\n    for (let c = r + 1; c < n; c++) s -= A[r][c] * x[c];\n    x[r] = s / A[r][r];\n  }\n  return x;\n}\n\n/** Invert a 3x3 matrix (adjugate / determinant). */\nfunction invert3x3(m) {\n  const [a, b, c, d, e, f, g, h, i] = m;\n  const A = e * i - f * h, B = -(d * i - f * g), C = d * h - e * g;\n  const D = -(b * i - c * h), E = a * i - c * g, F = -(a * h - b * g);\n  const G = b * f - c * e, H = -(a * f - c * d), I = a * e - b * d;\n  const det = a * A + b * B + c * C;\n  if (!det) return m;\n  return [A / det, D / det, G / det, B / det, E / det, H / det, C / det, F / det, I / det];\n}\n\n/**\n * Warp the source-quad region into a rectangular ImageData via inverse\n * mapping + bilinear interpolation (no holes, sub-pixel quality).\n * @param {ImageData} src source pixels\n * @param {number[4][]} corners [TL,TR,BR,BL] in source coordinates\n * @param {number} outW destination width\n * @param {number} outH destination height\n * @returns {ImageData}\n */\nfunction warpIntoImageData(src, corners, outW, outH) {\n  const dstQuad = [[0, 0], [outW, 0], [outW, outH], [0, outH]];\n  const H = solveHomography(corners, dstQuad);\n  const Hi = invert3x3(H);\n\n  const out = new ImageData(outW, outH);\n  const d = out.data, s = src.data;\n  const sw = src.width, sh = src.height;\n\n  for (let v = 0; v < outH; v++) {\n    for (let u = 0; u < outW; u++) {\n      const w = 1 / (Hi[6] * u + Hi[7] * v + Hi[8]);\n      const x = (Hi[0] * u + Hi[1] * v + Hi[2]) * w;\n      const y = (Hi[3] * u + Hi[4] * v + Hi[5]) * w;\n      if (x < 0 || y < 0 || x > sw - 1 || y > sh - 1) continue;\n\n      const x0 = Math.floor(x), y0 = Math.floor(y);\n      const dx = x - x0, dy = y - y0;\n      const i00 = (y0 * sw + x0) * 4;\n      const i10 = i00 + 4, i01 = i00 + sw * 4, i11 = i01 + 4;\n      const o = (v * outW + u) * 4;\n      for (let ch = 0; ch < 3; ch++) {\n        d[o + ch] = (s[i00 + ch] * (1 - dx) * (1 - dy)) +\n                    (s[i10 + ch] * dx * (1 - dy)) +\n                    (s[i01 + ch] * (1 - dx) * dy) +\n                    (s[i11 + ch] * dx * dy);\n      }\n      d[o + 3] = 255;\n    }\n  }\n  return out;\n}\n\n/**\n * Page size from the detected quad, capped at `maxDim` pixels on the long\n * side (1800 is a good balance of quality vs. mobile memory).\n * @param {number[4][]} corners\n * @param {number} [maxDim]\n * @returns {{W:number, H:number}}\n */\nfunction pageSizeFromQuad(corners, maxDim = 1800) {\n  const [tl, tr, br, bl] = corners;\n  const top = dist(tl[0], tl[1], tr[0], tr[1]);\n  const bottom = dist(br[0], br[1], bl[0], bl[1]);\n  const left = dist(bl[0], bl[1], tl[0], tl[1]);\n  const right = dist(br[0], br[1], tr[0], tr[1]);\n  let W = (top + bottom) / 2;\n  let H = (left + right) / 2;\n  const scale = Math.min(1, maxDim / Math.max(W, H, 1));\n  return { W: Math.max(2, Math.round(W * scale)), H: Math.max(2, Math.round(H * scale)) };\n}\n\n/* ------------------------------------------------------------------ *\n * 7. Otsu threshold (binarization preset)\n * ------------------------------------------------------------------ */\n\n/**\n * Otsu's method on a luminance histogram. Returns the threshold that splits\n * the histogram into two classes minimizing within-class variance.\n * @param {Float32Array} lum\n * @returns {number}\n */\nfunction otsuThreshold(lum) {\n  const hist = new Uint32Array(256);\n  for (let i = 0; i < lum.length; i++) hist[clamp(lum[i], 0, 255) | 0]++;\n  const total = lum.length;\n  let sum = 0;\n  for (let t = 0; t < 256; t++) sum += t * hist[t];\n\n  let sumB = 0, wB = 0, maxVar = 0, threshold = 128;\n  for (let t = 0; t < 256; t++) {\n    wB += hist[t];\n    if (wB === 0) continue;\n    const wF = total - wB;\n    if (wF === 0) break;\n    sumB += t * hist[t];\n    const mB = sumB / wB;\n    const mF = (sum - sumB) / wF;\n    const varBetween = wB * wF * (mB - mF) * (mB - mF);\n    if (varBetween > maxVar) { maxVar = varBetween; threshold = t; }\n  }\n  return threshold;\n}\n\n/**\n * worker.js — detection + perspective-warp + enhancement pipeline for the\n * document scanner. Pure Canvas API inside a Web Worker; no OpenCV.\n *\n * Imports the shared math/image primitives from utils.js.\n *\n * Message protocol (in):\n *   { id, type:'ping' }\n *   { id, type:'detect', imageBitmap }                         -> corners only\n *   { id, type:'scan',   imageBitmap }                         -> detect + warp\n *   { id, type:'warp',   imageBitmap, corners }                -> warp with given corners\n *   { id, type:'enhance', imageData, preset }                  -> filter an ImageData\n * Message protocol (out):\n *   { id, type:'pong' }\n *   { id, type:'detected', corners|null, stats }               (corners in input coords)\n *   { id, type:'result', corners, imageBitmap, stats }         (scan / warp)\n *   { id, type:'enhanced', imageData }                         (enhance)\n *   { id, type:'error', message }\n */\n'use strict';\n\n\n\nself.onmessage = async (event) => {\n  const msg = event.data;\n  try {\n    if (msg.type === 'ping') {\n      return self.postMessage({ id: msg.id, type: 'pong' });\n    }\n\n    if (msg.type === 'enhance') {\n      const out = enhance(msg.imageData, msg.preset);\n      return self.postMessage({ id: msg.id, type: 'enhanced', imageData: out });\n    }\n\n    if (msg.type === 'detect') {\n      const src = imageDataFromBitmap(msg.imageBitmap);\n      const corners = detectDocument(src);\n      return self.postMessage({\n        id: msg.id, type: 'detected',\n        corners: corners,\n        stats: { cornersFound: !!corners, timeMs: 0 },\n      });\n    }\n\n    if (msg.type === 'scan') {\n      const src = imageDataFromBitmap(msg.imageBitmap);\n      const t0 = performance.now();\n      const corners = detectDocument(src);\n      if (!corners) {\n        return self.postMessage({\n          id: msg.id, type: 'result',\n          corners: null, imageBitmap: null,\n          stats: { cornersFound: false, timeMs: performance.now() - t0 },\n        });\n      }\n      const size = pageSizeFromQuad(corners, 1800);\n      const page = new OffscreenCanvas(size.W, size.H);\n      const pageCtx = page.getContext('2d');\n      const out = warpIntoImageData(src, corners, size.W, size.H);\n      pageCtx.putImageData(out, 0, 0);\n      const pageBitmap = page.transferToImageBitmap();\n      return self.postMessage(\n        {\n          id: msg.id, type: 'result',\n          corners: corners, imageBitmap: pageBitmap,\n          stats: { cornersFound: true, timeMs: performance.now() - t0 },\n        },\n        [pageBitmap]\n      );\n    }\n\n    if (msg.type === 'warp') {\n      const src = imageDataFromBitmap(msg.imageBitmap);\n      const corners = msg.corners;\n      const size = pageSizeFromQuad(corners, 1800);\n      const page = new OffscreenCanvas(size.W, size.H);\n      const pageCtx = page.getContext('2d');\n      const out = warpIntoImageData(src, corners, size.W, size.H);\n      pageCtx.putImageData(out, 0, 0);\n      const pageBitmap = page.transferToImageBitmap();\n      return self.postMessage(\n        { id: msg.id, type: 'result', corners: corners, imageBitmap: pageBitmap, stats: { cornersFound: true } },\n        [pageBitmap]\n      );\n    }\n  } catch (err) {\n    self.postMessage({ id: msg.id, type: 'error', message: err.message });\n  }\n};\n\n/* ------------------------------------------------------------------ *\n * Input helpers\n * ------------------------------------------------------------------ */\n\n/** Read a transferred ImageBitmap into an ImageData (closes the bitmap). */\nfunction imageDataFromBitmap(bmp) {\n  const c = new OffscreenCanvas(bmp.width, bmp.height);\n  const ctx = c.getContext('2d');\n  ctx.drawImage(bmp, 0, 0);\n  const img = ctx.getImageData(0, 0, c.width, c.height);\n  bmp.close();\n  return img;\n}\n\n/* ------------------------------------------------------------------ *\n * Detection\n * ------------------------------------------------------------------ */\n\n/**\n * Detect the 4 document corners on a potentially textured background.\n *\n * This is the web port of the OSS-DocumentScanner detector\n * (cpp/src/DocumentDetector.cpp). The same ideas are reproduced in plain JS:\n *   1. Downscale so the longest side is <= DETECT_MAX (their resizeThreshold).\n *   2. Multi-threshold edge sweep, strict -> lenient (their Canny loop over\n *      low thresholds 60..10). Strong edges first, weaker edges only as a\n *      fallback for low-contrast paper. Each pass runs morphological close\n *      (their MORPH_CLOSE / dilate) then traces connected edge components\n *      (their findContours) and approximates the largest one to a quad\n *      (their approxPolyDP). Stop early once an \"optimal\" quad is found\n *      (their expectedOptimalMaxCosine + expectedAreaFactor early exit).\n *   3. Bright-paper candidate: local-mean adaptive threshold isolates the\n *      paper as a bright connected blob (handles shadows + tiled floors),\n *      then hull -> quad (their threshold-based channel pass).\n *   4. Selection via their scoring: `area + weight * (1 - maxCosine)` — prefers\n *      big right-angled quads, with strict-threshold passes weighted higher.\n *      Rectangle-angle gate (expectedMaxCosine=0.4) and near-border rejection\n *      (their borderSize) filter frame-hugging background quads.\n *   5. Shi-Tomasi refine + angular corner ordering on the downscaled\n *      gradients, then scale back to the ORIGINAL input-image coordinates.\n *\n * @param {ImageData} img\n * @returns {number[4][]|null} [TL,TR,BR,BL] or null\n */\nfunction detectDocument(img) {\n  const fullW = img.width, fullH = img.height;\n  if (fullW < 40 || fullH < 40) return null;\n\n  // --- downscale ---\n  const scale = Math.min(1, DETECT_MAX / Math.max(fullW, fullH));\n  const w = Math.max(32, Math.round(fullW * scale));\n  const h = Math.max(32, Math.round(fullH * scale));\n  const small = new OffscreenCanvas(w, h);\n  const sctx = small.getContext('2d', { willReadFrequently: true });\n  sctx.drawImage(createCanvasFromImageData(img), 0, 0, w, h);\n  const sImg = sctx.getImageData(0, 0, w, h);\n\n  // --- shared luminance / gradients ---\n  const lum = toLuminance(sImg.data, w, h);\n  boxBlur(lum, w, h, 2); // suppress floor-tile texture (their median blur)\n  const { mag, gx, gy } = sobel(lum, w, h);\n  const nms = cannyNms(mag, gx, gy, w, h); // thin edges, kill background noise\n\n  // --- edge sweep (strict -> lenient), like their Canny threshold loop ---\n  const candidates = [];\n  let optimalFound = false;\n  for (let i = 0; i < EDGE_SWEEP.length; i++) {\n    if (optimalFound) break;\n    const quad = contourQuadFromMag(lum, nms, w, h, EDGE_SWEEP[i]);\n    if (!quad) continue;\n    candidates.push({ quad });\n    // Early exit once a clean, reasonably large quad is found.\n    if (quadMaxCosine(quad) < EDGE_OPTIMAL_MAX_COS &&\n        quadArea(quad) / (w * h) > EDGE_OPTIMAL_AREA) optimalFound = true;\n  }\n\n  // --- bright-paper candidate (their threshold-based channel pass) ---\n  const brights = brightPaperCandidate(lum, mag, w, h);\n  for (const q of brights) candidates.push({ quad: q });\n\n  if (!candidates.length) return null;\n\n  // --- score = area + weight*(1-maxCosine); strict passes weigh more ---\n  let best = null, bestScore = -Infinity;\n  for (let i = 0; i < candidates.length; i++) {\n    const quad = candidates[i].quad;\n    const maxCos = quadMaxCosine(quad);\n    if (maxCos > EDGE_MAX_COS) continue;        // rectangle-angle gate\n    if (nearBorder(quad, w, h, MARGIN)) continue; // frame-hugging background\n    const weight = i < EDGE_SWEEP.length ? EDGE_WEIGHT0 - i : EDGE_WEIGHT0 / 2;\n    const score = quadArea(quad) + weight * (1 - maxCos);\n    if (score > bestScore) { bestScore = score; best = { quad }; }\n  }\n  if (!best) return null;\n\n  // --- refine to exact pixel corners on the downscaled gradients ---\n  const refined = refineCorners(gx, gy, w, h, best.quad, 16, 2);\n  const ordered = orderCorners(refined);\n\n  // --- scale back to full resolution ---\n  const inv = 1 / scale;\n  return ordered.map(([x, y]) => [clamp(Math.round(x * inv), 0, fullW - 1), clamp(Math.round(y * inv), 0, fullH - 1)]);\n}\n\n/** Downscale target for detection (their resizeThreshold). */\nconst DETECT_MAX = 1000;\n/** Canny-equivalent magnitude sweep: strict (clean) edges first, lenient last. */\nconst EDGE_SWEEP = [150, 110, 75, 45];\n/** their expectedOptimalMaxCosine: a quad this square-ish triggers early exit. */\nconst EDGE_OPTIMAL_MAX_COS = 0.30;\n/** their expectedAreaFactor: early-exit quads must cover >= 20% of the frame. */\nconst EDGE_OPTIMAL_AREA = 0.20;\n/** their expectedMaxCosine (0.4) + a little slack for perspective. */\nconst EDGE_MAX_COS = 0.45;\n/** their findSquares area weight: right angles outweigh raw area. */\nconst EDGE_WEIGHT0 = 3000000;\n/** their borderSize: quads touching the frame are background, not paper. */\nconst MARGIN = 6;\n\n/**\n * Largest |cos| of the four interior angles of a quad. 0 means perfect right\n * angles; near 1 means a sliver / collapsed shape.\n */\nfunction quadMaxCosine(quad) {\n  let mx = 0;\n  for (let i = 0; i < 4; i++) {\n    const a = quad[i], b = quad[(i + 1) % 4], c = quad[(i + 2) % 4];\n    const ux = a.x - b.x, uy = a.y - b.y;\n    const vx = c.x - b.x, vy = c.y - b.y;\n    const den = (Math.sqrt(ux * ux + uy * uy) * Math.sqrt(vx * vx + vy * vy)) || 1;\n    const ac = Math.abs((ux * vx + uy * vy) / den);\n    if (ac > mx) mx = ac;\n  }\n  return mx;\n}\n\n/** True if any corner lies within `m` px of the image border. */\nfunction nearBorder(quad, w, h, m) {\n  for (const p of quad) {\n    if (p.x < m || p.y < m || p.x >= w - m || p.y >= h - m) return true;\n  }\n  return false;\n}\n\n/**\n * Quad from a single edge-magnitude threshold, emulating one Canny pass +\n * findContours + approxPolyDP:\n *   1. threshold the Sobel magnitude,\n *   2. morphological close (dilate + erode) to bridge gaps in the paper edge,\n *   3. label connected components; ignore any hugging >= 3 image borders,\n *   4. take the largest remaining component, hull it and approximate a quad.\n * This is why a tiled floor with grout lines does NOT defeat it: grout edges\n * are separate small components; only the closed paper outline survives.\n * @returns {Array<{x,y}>|null}\n */\nfunction contourQuadFromMag(lum, mag, w, h, threshold) {\n  const n = w * h;\n  const mask = new Uint8Array(n);\n  for (let i = 0; i < n; i++) mask[i] = mag[i] > threshold ? 1 : 0;\n  morphClose(mask, w, h, 1);\n\n  const comps = connectedComponents(mask, w, h);\n  let bestQ = null;\n  for (const comp of comps) {\n    if (comp.count < n * 0.004) break; // sorted by count desc\n    const hits = (comp.minX === 0 ? 1 : 0) + (comp.maxX === w - 1 ? 1 : 0) +\n                 (comp.minY === 0 ? 1 : 0) + (comp.maxY === h - 1 ? 1 : 0);\n    if (hits >= 3) continue; // the background itself\n    const pixels = floodFillPixels(mask, w, h, comp.id);\n    const hull = convexHull(pixels);\n    const quad = approxQuad(hull);\n    if (!validateAspect(quad, w, h)) continue;\n    if (!bestQ) bestQ = quad;\n    break; // first valid (largest) component is the best at this threshold\n  }\n  return bestQ;\n}\n\n/**\n * Canny non-maximum suppression: keep only local maxima of the gradient\n * magnitude along the gradient direction. Thins edges to single pixels and\n * eliminates the diffuse low-magnitude noise of textured backgrounds (floor\n * tiles, wood grain), which is what lets strict thresholds isolate the paper\n * outline (their Canny(t, 2t)).\n * @returns {Float32Array} NMS'd magnitudes (0 where suppressed)\n */\nfunction cannyNms(mag, gx, gy, w, h) {\n  const nms = new Float32Array(w * h);\n  for (let y = 1; y < h - 1; y++) {\n    for (let x = 1; x < w - 1; x++) {\n      const i = y * w + x;\n      const m = mag[i];\n      const ax = Math.abs(gx[i]), ay = Math.abs(gy[i]);\n      let m1, m2;\n      if (ax > ay) {\n        if (gx[i] > 0) { m1 = mag[i + 1]; m2 = mag[i - 1]; }\n        else { m1 = mag[i - 1]; m2 = mag[i + 1]; }\n      } else {\n        if (gy[i] > 0) { m1 = mag[i + w]; m2 = mag[i - w]; }\n        else { m1 = mag[i - w]; m2 = mag[i + w]; }\n      }\n      if (m >= m1 && m >= m2) nms[i] = m;\n    }\n  }\n  return nms;\n}\n\n/**\n * Morphological close: dilate 3x3 `iter` times then erode 3x3. Bridges small\n * gaps in edge pixels (their morphologyAnchorSize=4 / dilateAnchorSize=3)\n * so a slightly broken paper outline still forms one connected component.\n */\nfunction morphClose(mask, w, h, iter) {\n  const n = w * h;\n  let tmp = new Uint8Array(n);\n  let src = mask;\n  for (let it = 0; it < iter; it++) {\n    for (let y = 0; y < h; y++) {\n      const ym = y > 0 ? -w : 0, yp = y < h - 1 ? w : 0;\n      for (let x = 0; x < w; x++) {\n        const i = y * w + x;\n        const xm = x > 0 ? -1 : 0, xp = x < w - 1 ? 1 : 0;\n        tmp[i] = (src[i + ym + xm] || src[i + ym] || src[i + ym + xp] ||\n                  src[i + xm] || src[i] || src[i + xp] ||\n                  src[i + yp + xm] || src[i + yp] || src[i + yp + xp]) ? 1 : 0;\n      }\n    }\n    const t = src; src = tmp; tmp = t; // dilate again on the result\n  }\n  // erode: keep pixels whose full 3x3 neighborhood survived the dilation\n  for (let y = 1; y < h - 1; y++) {\n    for (let x = 1; x < w - 1; x++) {\n      const i = y * w + x;\n      tmp[i] = (src[i - w - 1] && src[i - w] && src[i - w + 1] &&\n                src[i - 1] && src[i] && src[i + 1] &&\n                src[i + w - 1] && src[i + w] && src[i + w + 1]) ? 1 : 0;\n    }\n  }\n  for (let x = 0; x < w; x++) { tmp[x] = 0; tmp[(h - 1) * w + x] = 0; }\n  for (let y = 0; y < h; y++) { tmp[y * w] = 0; tmp[y * w + w - 1] = 0; }\n  mask.set(tmp);\n}\n\n/** Build an OffscreenCanvas from an ImageData (for resizing). */\nfunction createCanvasFromImageData(img) {\n  const c = new OffscreenCanvas(img.width, img.height);\n  c.getContext('2d').putImageData(img, 0, 0);\n  return c;\n}\n\n/** Area of a quad (shoelace), in the given pixel space. */\nfunction quadArea(quad) {\n  let area = 0;\n  for (let i = 0; i < 4; i++) {\n    const [x1, y1] = [quad[i].x, quad[i].y];\n    const [x2, y2] = [quad[(i + 1) % 4].x, quad[(i + 1) % 4].y];\n    area += x1 * y2 - x2 * y1;\n  }\n  return Math.abs(area) / 2;\n}\n\n/**\n * Candidate A: bright paper blob(s) = document.\n * Adaptive threshold \"brighter than local surroundings\" (integral image) marks\n * the paper as a bright ring around the page boundary. The ring can split into\n * separate components where ink rows touch the paper edges, so we union the\n * largest components incrementally and take the hull of every prefix — each\n * prefix that yields a valid quad is returned as a candidate. The convex hull\n * bridges the gaps, so a split ring still produces the full page quad.\n * @param {Float32Array} lum\n * @param {Float32Array} mag (unused, kept for symmetry)\n * @returns {Array<Array<{x,y}>>} list of candidate quads\n */\nfunction brightPaperCandidate(lum, mag, w, h) {\n  const sum = integralImage(lum, w, h);\n  const radius = Math.max(8, Math.round(Math.max(w, h) * 0.08));\n  const mean = localMean(lum, w, h, sum, radius);\n\n  const mask = new Uint8Array(w * h);\n  for (let i = 0; i < mask.length; i++) {\n    mask[i] = lum[i] > mean[i] + 10 ? 1 : 0;\n  }\n\n  const minCount = w * h * 0.01;\n  const comps = connectedComponents(mask, w, h).filter((c) => c.count >= minCount).slice(0, 6);\n  const quads = [];\n  let unionPixels = [];\n  for (const comp of comps) {\n    // Reject components hugging >= 3 image borders (the background itself).\n    const hits = (comp.minX === 0 ? 1 : 0) + (comp.maxX === w - 1 ? 1 : 0) +\n                 (comp.minY === 0 ? 1 : 0) + (comp.maxY === h - 1 ? 1 : 0);\n    if (hits >= 3) continue;\n    unionPixels = unionPixels.concat(floodFillPixels(mask, w, h, comp.id));\n    const hull = convexHull(unionPixels);\n    const quad = approxQuad(hull);\n    if (validateAspect(quad, w, h)) quads.push(quad);\n  }\n  return quads;\n}\n\n/* ------------------------------------------------------------------ *\n * Enhancement presets (Arabic-text friendly)\n * ------------------------------------------------------------------ */\n\n/**\n * Apply an enhancement preset to an ImageData (mutates it).\n *\n * For Arabic documents the 'clean' preset is recommended: it removes uneven\n * lighting / shadows while KEEPING grayscale anti-aliasing, which preserves\n * thin strokes and the diacritic dots. 'bw' additionally applies Otsu for a\n * hard black-on-white scan.\n *\n * @param {ImageData} img\n * @param {'original'|'gray'|'contrast'|'clean'|'color'|'bw'} preset\n * @returns {ImageData} same object (mutated)\n */\nfunction enhance(img, preset) {\n  const d = img.data;\n  const w = img.width, h = img.height;\n\n  if (preset === 'original') return img;\n\n  if (preset === 'gray') {\n    for (let i = 0; i < d.length; i += 4) {\n      const g = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];\n      d[i] = d[i + 1] = d[i + 2] = g;\n    }\n    return img;\n  }\n\n  if (preset === 'contrast') {\n    const lum = toLuminance(d, w, h);\n    const { lo, hi } = percentileBounds(lum, 0.02, 0.98);\n    const range = Math.max(1, hi - lo);\n    for (let i = 0; i < d.length; i += 4) {\n      d[i] = (d[i] - lo) / range * 255;\n      d[i + 1] = (d[i + 1] - lo) / range * 255;\n      d[i + 2] = (d[i + 2] - lo) / range * 255;\n    }\n    return img;\n  }\n\n  if (preset === 'clean') {\n    // White-paper pipeline (web port of WhitePaperTransform.cpp):\n    //   1. DoG high-pass: wide box blur as the illumination model, then\n    //      v = 255 + (lum - wide) * gain. Flat paper (including smooth\n    //      shadows/gradients) maps to exactly 255, ink is pushed to 0.\n    const lum = toLuminance(d, w, h);\n    const wide = lum.slice();\n    const rW = Math.max(16, Math.round(Math.max(w, h) * 0.12)); // their dogSigma1\n    boxBlur(wide, w, h, rW);\n    const gain = 1.6;\n    for (let i = 0; i < lum.length; i++) {\n      const v = clamp(255 + (lum[i] - wide[i]) * gain, 0, 255);\n      const o = i * 4;\n      d[o] = d[o + 1] = d[o + 2] = v;\n    }\n\n    //   2. Safe percentile stretch (their contrastStretch 2%/99.5%) that can\n    //      never turn the paper cluster black: the black point is floored at\n    //      hi - 48, so sparse-ink pages (paper pinned at 255) still map to\n    //      white while faint gray copies get a real contrast boost.\n    const cs = percentileBoundsChannel(d, w, h, 0.02, 0.995);\n    for (let i = 0; i < d.length; i += 4) {\n      for (let ch = 0; ch < 3; ch++) {\n        const hi = cs.hi[ch];\n        const lo = Math.min(cs.lo[ch], hi - 48);\n        const scale = 255 / Math.max(hi - lo, 1);\n        d[i + ch] = clamp((d[i + ch] - lo) * scale, 0, 255);\n      }\n    }\n\n    //   3. Light unsharp mask to crisp Arabic strokes/dots without halos.\n    const lum2 = toLuminance(d, w, h);\n    const blurred = lum2.slice();\n    boxBlur(blurred, w, h, 2);\n    const amount = 0.45;\n    for (let i = 0; i < lum2.length; i++) {\n      const g = clamp(lum2[i] + amount * (lum2[i] - blurred[i]), 0, 255);\n      const o = i * 4;\n      d[o] = d[o + 1] = d[o + 2] = g;\n    }\n\n    //   4. Gentle gamma (their gammaValue=1.1) to lift midtones.\n    const gammaInv = 1 / 1.1;\n    for (let i = 0; i < d.length; i += 4) {\n      for (let ch = 0; ch < 3; ch++) {\n        d[i + ch] = clamp(Math.pow(d[i + ch] / 255, gammaInv) * 255, 0, 255);\n      }\n    }\n    return img;\n  }\n\n  if (preset === 'color') {\n    // SimpleScanner-style color preservation: whiten the paper first, then\n    // restore only clearly saturated ink/stamps/photos from the original.\n    const original = new Uint8ClampedArray(d);\n    enhance(img, 'clean');\n    for (let i = 0; i < d.length; i += 4) {\n      const r = original[i], g = original[i + 1], b = original[i + 2];\n      const hi = Math.max(r, g, b), lo = Math.min(r, g, b);\n      if (hi - lo >= 45 && hi >= 50 && hi <= 245) {\n        d[i] = r; d[i + 1] = g; d[i + 2] = b;\n      }\n    }\n    return img;\n  }\n\n  if (preset === 'bw') {\n    enhance(img, 'clean');\n    const lum = toLuminance(d, w, h);\n    const t = otsuThreshold(lum);\n    for (let i = 0, p = 0; i < d.length; i += 4, p++) {\n      const v = lum[p] >= t ? 255 : 0;\n      d[i] = d[i + 1] = d[i + 2] = v;\n    }\n    return img;\n  }\n\n  return img;\n}\n\n/** Low/high percentile of a luminance plane. */\nfunction percentileBounds(lum, plo, phi) {\n  const n = lum.length;\n  const step = Math.max(1, Math.floor(n / 20000)); // bounded sampling for speed\n  const samples = new Float32Array(Math.ceil(n / step));\n  for (let i = 0, p = 0; i < n; i += step, p++) samples[p] = lum[i];\n  samples.sort();\n  return {\n    lo: samples[clamp(Math.floor(samples.length * plo), 0, samples.length - 1)],\n    hi: samples[clamp(Math.floor(samples.length * phi), 0, samples.length - 1)],\n  };\n}\n\n/** Per-channel low/high percentiles of RGBA data (their contrastStretch). */\nfunction percentileBoundsChannel(data, w, h, plo, phi) {\n  const n = data.length / 4;\n  const step = Math.max(1, Math.floor(n / 20000));\n  const count = Math.ceil(n / step);\n  const ch = [\n    new Float32Array(count),\n    new Float32Array(count),\n    new Float32Array(count),\n  ];\n  for (let p = 0, o = 0; o < data.length; o += step * 4, p++) {\n    ch[0][p] = data[o];\n    ch[1][p] = data[o + 1];\n    ch[2][p] = data[o + 2];\n  }\n  const lo = [], hi = [];\n  for (let c = 0; c < 3; c++) {\n    ch[c].sort();\n    lo.push(ch[c][clamp(Math.floor(count * plo), 0, count - 1)]);\n    hi.push(ch[c][clamp(Math.floor(count * phi), 0, count - 1)]);\n  }\n  return { lo, hi };\n}\n"], {type:'text/javascript'});
+   state.worker = new Worker(URL.createObjectURL(blob));
+  const pending = new Map();
+  state.worker.onmessage = (e) => {
+    const { id, type, message } = e.data;
+    const p = pending.get(id);
+    if (!p) return;
+    pending.delete(id);
+    if (type === 'error') p.reject(new Error(message));
+    else p.resolve(e.data);
+  };
+  state.worker.onerror = (e) => {
+    for (const p of pending.values()) p.reject(new Error(e.message || 'Worker error'));
+    pending.clear();
+  };
+  state._pending = pending;
+}
+
+/**
+ * Send a message to the worker and await the response.
+ * @param {object} msg message payload (id auto-assigned)
+ * @param {Transferable[]} [transfer] objects to transfer
+ * @returns {Promise<object>}
+ */
+function sendToWorker(msg, transfer) {
+  return new Promise((resolve, reject) => {
+    const id = ++state.seq;
+    const payload = Object.assign({ id }, msg);
+    state._pending.set(id, { resolve, reject });
+    state.worker.postMessage(payload, transfer || []);
+  });
+}
+
+/* ------------------------------------------------------------------ *
+ * Camera / source setup
+ * ------------------------------------------------------------------ */
+init();
+
+async function init() {
+  bindUI();
+  try {
+    await startCamera();
+  } catch (err) {
+    console.warn('Camera unavailable:', err);
+    // HTTP from a phone, or permission denied -> fall back to capture/file UI.
+    enterEmptyMode();
+  }
+}
+
+/** Request the rear camera and start the live loop. */
+async function startCamera() {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+    audio: false,
+  });
+  state.stream = stream;
+  state.live = true;
+  el.cam.srcObject = stream;
+  await el.cam.play();
+  sizeOverlay(el.cam.videoWidth, el.cam.videoHeight);
+  el.cam.hidden = false;
+  el.still.hidden = true;
+  el.empty.hidden = true;
+  setStatus('جارِ الكشف…', 'busy');
+  liveLoop();
+}
+
+/** Stop the camera stream and cancel the live loop. */
+function stopCamera() {
+  if (state.stream) {
+    state.stream.getTracks().forEach((t) => t.stop());
+    state.stream = null;
+  }
+  if (state.rafId) cancelAnimationFrame(state.rafId);
+  state.rafId = null;
+  state.live = false;
+  el.cam.srcObject = null;
+  el.cam.hidden = true;
+}
+
+/** Show the empty state (camera not usable) and rely on the file input. */
+function enterEmptyMode() {
+  el.empty.hidden = false;
+  setStatus('الكاميرا غير متاحة — اختر صورة', 'warn');
+}
+
+/** Capture the current video frame into the offscreen full-res source. */
+function freezeFrame() {
+  const v = el.cam;
+  if (!v.videoWidth) return false;
+  const c = document.createElement('canvas');
+  c.width = v.videoWidth;
+  c.height = v.videoHeight;
+  c.getContext('2d').drawImage(v, 0, 0);
+  setSource(c);
+  return true;
+}
+
+/**
+ * Set the offscreen full-res source (video frame or uploaded photo) and
+ * mirror it on the "still" canvas for the overlay/result flow.
+ * @param {HTMLCanvasElement} canvas
+ */
+function setSource(canvas) {
+  state.sourceCanvas = canvas;
+  state.sourceW = canvas.width;
+  state.sourceH = canvas.height;
+  el.still.width = canvas.width;
+  el.still.height = canvas.height;
+  stillCtx.drawImage(canvas, 0, 0);
+  el.still.hidden = false;
+  sizeOverlay(canvas.width, canvas.height);
+}
+
+/** Size the overlay canvas to the displayed image resolution. */
+function sizeOverlay(w, h) {
+  el.overlay.width = w;
+  el.overlay.height = h;
+  layoutOverlay(w, h);
+}
+
+/** Keep the interactive canvas exactly over the visible (letterbox-free) image. */
+function layoutOverlay(sourceW, sourceH) {
+  const host = el.overlay.parentElement;
+  const hostW = host.clientWidth, hostH = host.clientHeight;
+  if (!hostW || !hostH || !sourceW || !sourceH) return;
+  const scale = Math.min(hostW / sourceW, hostH / sourceH);
+  const width = sourceW * scale, height = sourceH * scale;
+  el.overlay.style.width = width + 'px';
+  el.overlay.style.height = height + 'px';
+  el.overlay.style.left = ((hostW - width) / 2) + 'px';
+  el.overlay.style.top = ((hostH - height) / 2) + 'px';
+  el.overlay.style.right = 'auto';
+  el.overlay.style.bottom = 'auto';
+}
+
+new ResizeObserver(() => {
+  const w = state.live ? el.cam.videoWidth : state.sourceW;
+  const h = state.live ? el.cam.videoHeight : state.sourceH;
+  layoutOverlay(w, h);
+}).observe(el.overlay.parentElement);
+
+/* ------------------------------------------------------------------ *
+ * Live detection loop
+ * ------------------------------------------------------------------ */
+
+/** rAF loop: draws nothing itself, but schedules throttled detections. */
+function liveLoop() {
+  state.rafId = requestAnimationFrame(liveLoop);
+  const v = el.cam;
+  if (!v.videoWidth || state.detecting) return;
+  if (state.cornersEdited) return; // manual mode: stop overwriting the user's corners
+  if (performance.now() - state.lastDetectAt < LIVE_DETECT_MS) return;
+  if (!state.btnDetect.classList.contains('on')) return;
+  state.lastDetectAt = performance.now();
+  runDetectFromLive();
+}
+
+/**
+ * Grab a downscaled frame, ask the worker for corners, normalize the result
+ * and repaint the overlay. Low-resolution input keeps this fast enough for
+ * "live frame" feedback on a mid-range phone.
+ */
+async function runDetectFromLive() {
+  state.detecting = true;
+  try {
+    const v = el.cam;
+    const scale = Math.min(1, 720 / Math.max(v.videoWidth, v.videoHeight));
+    const w = Math.max(64, Math.round(v.videoWidth * scale));
+    const h = Math.max(64, Math.round(v.videoHeight * scale));
+    const small = document.createElement('canvas');
+    small.width = w; small.height = h;
+    small.getContext('2d').drawImage(v, 0, 0, w, h);
+    const bmp = await createImageBitmap(small);
+
+    const res = await sendToWorker({ type: 'detect', imageBitmap: bmp }, [bmp]);
+    if (!state.live) return;
+
+    if (res.corners) {
+      applyCorners(res.corners, w, h);
+      updateStability(state.normCorners);
+      setStatus('✓ الإطار محدد', 'ok');
+      el.fab.classList.add('ready');
+    } else {
+      setDefaultCorners();
+      resetStability();
+      setStatus('حدّد زوايا المستند يدويًا ثم اضغط تأكيد', 'warn');
+      el.fab.classList.add('ready');
+    }
+    drawOverlay();
+  } catch (err) {
+    console.warn('live detect failed:', err);
+  } finally {
+    state.detecting = false;
+  }
+}
+
+/**
+ * Store normalized corners + derived edge lines from a detection that ran at
+ * (w, h) resolution.
+ * @param {number[4][]} corners
+ * @param {number} w
+ * @param {number} h
+ */
+function applyCorners(corners, w, h) {
+  state.normCorners = corners.map(([x, y]) => [x / w, y / h]);
+  state.lastLines = [];
+  for (let i = 0; i < 4; i++) {
+    const [ax, ay] = state.normCorners[i];
+    const [bx, by] = state.normCorners[(i + 1) % 4];
+    state.lastLines.push({ ax, ay, bx, by });
+  }
+}
+
+/** Show a sensible editable crop when automatic detection cannot find a page. */
+function setDefaultCorners() {
+  const margin = 0.08;
+  state.normCorners = [
+    [margin, margin], [1 - margin, margin],
+    [1 - margin, 1 - margin], [margin, 1 - margin],
+  ];
+  state.lastLines = null;
+}
+
+/* ------------------------------------------------------------------ *
+ * Stability auto-capture (OSS AutoScanHandler behavior)
+ * ------------------------------------------------------------------ */
+
+/** Forget the stability bookkeeping (camera restarted, no frame, manual edit). */
+function resetStability() {
+  state.lastStableCorners = null;
+  state.stableSince = 0;
+}
+
+/**
+ * Track how still the detected quad is between consecutive live detections.
+ * Once the normalized corners stay within STABLE_DISP of the previous frame
+ * for STABLE_MS, auto-capture (the OSS app's "scans when you stop").
+ * @param {number[4][]} cornersNorm normalized corners [TL, TR, BR, BL]
+ */
+function updateStability(cornersNorm) {
+  if (!state.live || state.cornersEdited || state.autoCapFired) {
+    resetStability();
+    return;
+  }
+  const prev = state.lastStableCorners;
+  state.lastStableCorners = cornersNorm;
+  if (!prev) return; // first sample — need two frames to compare
+
+  let maxD = 0;
+  for (let i = 0; i < 4; i++) {
+    maxD = Math.max(maxD, dist(prev[i][0], prev[i][1], cornersNorm[i][0], cornersNorm[i][1]));
+  }
+  if (maxD > STABLE_DISP) {
+    state.stableSince = 0;
+    return;
+  }
+  if (!state.stableSince) state.stableSince = performance.now();
+  if (performance.now() - state.stableSince >= STABLE_MS) {
+    state.autoCapFired = true;
+    resetStability();
+    onConfirm();
+  }
+}
+
+/** Angle at vertex B in degrees (interior angle of the quad). */
+function angleDeg(a, b, c) {
+  const ux = a[0] - b[0], uy = a[1] - b[1];
+  const vx = c[0] - b[0], vy = c[1] - b[1];
+  const dot = ux * vx + uy * vy;
+  const cross = ux * vy - uy * vx;
+  return Math.abs(Math.atan2(cross, dot)) * (180 / Math.PI);
+}
+
+/* ------------------------------------------------------------------ *
+ * Overlay rendering (dark outside, green quad, circular handles)
+ * ------------------------------------------------------------------ */
+
+/** Repaint the overlay canvas. */
+function drawOverlay() {
+  const ctx = overlayCtx;
+  const W = el.overlay.width, H = el.overlay.height;
+  ctx.clearRect(0, 0, W, H);
+  const corners = state.normCorners;
+  if (!corners) return;
+
+  const c = corners.map(([nx, ny]) => [nx * W, ny * H]);
+
+  // Dark semi-transparent overlay OUTSIDE the quad (even-odd fill).
+  ctx.fillStyle = 'rgba(8, 10, 18, 0.55)';
+  ctx.beginPath();
+  ctx.rect(0, 0, W, H);
+  ctx.moveTo(c[0][0], c[0][1]);
+  ctx.lineTo(c[1][0], c[1][1]);
+  ctx.lineTo(c[2][0], c[2][1]);
+  ctx.lineTo(c[3][0], c[3][1]);
+  ctx.closePath();
+  ctx.fill('evenodd');
+
+  // Green quadrilateral boundary.
+  ctx.strokeStyle = '#22c55e';
+  ctx.lineWidth = 3;
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(c[0][0], c[0][1]);
+  for (let i = 1; i < 4; i++) ctx.lineTo(c[i][0], c[i][1]);
+  ctx.closePath();
+  ctx.stroke();
+
+  // Four circular handles: white fill, green border, dark center dot.
+  for (let i = 0; i < 4; i++) {
+    const [x, y] = c[i];
+    ctx.beginPath();
+    ctx.arc(x, y, HANDLE_R, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.strokeStyle = i === state.activeHandle ? '#16a34a' : '#22c55e';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(x, y, 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#16a34a';
+    ctx.fill();
+  }
+
+  // Corner angle labels: show the interior angle at each vertex.
+  ctx.font = '600 11px "Inter", system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i < 4; i++) {
+    const prev = c[(i + 3) % 4];
+    const curr = c[i];
+    const next = c[(i + 1) % 4];
+    const angle = angleDeg(prev, curr, next);
+    const dev = Math.abs(angle - 90);
+    // Color: green <5°, amber 5-15°, red >15°
+    const col = dev < 5 ? '#22c55e' : dev < 15 ? '#f59e0b' : '#ef4444';
+    const text = Math.round(angle) + '°';
+    // Position label outward from the centroid along the diagonal.
+    const cx4 = (c[0][0] + c[1][0] + c[2][0] + c[3][0]) / 4;
+    const cy4 = (c[0][1] + c[1][1] + c[2][1] + c[3][1]) / 4;
+    const dx = curr[0] - cx4, dy = curr[1] - cy4;
+    const d = Math.hypot(dx, dy) || 1;
+    const off = 22;
+    const lx = curr[0] + (dx / d) * off;
+    const ly = curr[1] + (dy / d) * off;
+    // Background pill.
+    const tw = ctx.measureText(text).width + 8;
+    const px = lx - tw / 2, py = ly - 9, pw = tw, ph = 18, pr = 4;
+    ctx.fillStyle = 'rgba(8, 10, 18, 0.75)';
+    ctx.beginPath();
+    ctx.moveTo(px + pr, py);
+    ctx.lineTo(px + pw - pr, py);
+    ctx.quadraticCurveTo(px + pw, py, px + pw, py + pr);
+    ctx.lineTo(px + pw, py + ph - pr);
+    ctx.quadraticCurveTo(px + pw, py + ph, px + pw - pr, py + ph);
+    ctx.lineTo(px + pr, py + ph);
+    ctx.quadraticCurveTo(px, py + ph, px, py + ph - pr);
+    ctx.lineTo(px, py + pr);
+    ctx.quadraticCurveTo(px, py, px + pr, py);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = col;
+    ctx.fillText(text, lx, ly);
+  }
+
+  // Auto-capture progress: translucent fill inside the quad + a ring that
+  // fills up as the frame stabilizes.
+  if (state.stableSince && state.live && !state.cornersEdited && !state.autoCapFired) {
+    const progress = clamp((performance.now() - state.stableSince) / STABLE_MS, 0, 1);
+    if (progress > 0) {
+      ctx.beginPath();
+      ctx.moveTo(c[0][0], c[0][1]);
+      for (let i = 1; i < 4; i++) ctx.lineTo(c[i][0], c[i][1]);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(34, 197, 94, ' + (0.16 * progress).toFixed(3) + ')';
+      ctx.fill();
+
+      const cx = (c[0][0] + c[1][0] + c[2][0] + c[3][0]) / 4;
+      const cy = (c[0][1] + c[1][1] + c[2][1] + c[3][1]) / 4;
+      const R = 26;
+      ctx.beginPath();
+      ctx.arc(cx, cy, R, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress);
+      ctx.strokeStyle = '#22c55e';
+      ctx.lineWidth = 5;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Pointer interaction: drag handles with snap-to-edge
+ * ------------------------------------------------------------------ */
+
+/** Map a pointer event to overlay-canvas coordinates. @returns {{x:number,y:number}} */
+function toOverlayCoords(e) {
+  const r = el.overlay.getBoundingClientRect();
+  return {
+    x: (e.clientX - r.left) * (el.overlay.width / r.width),
+    y: (e.clientY - r.top) * (el.overlay.height / r.height),
+  };
+}
+
+/** Distance from a point to a normalized edge line, in overlay px. */
+function distToLinePx(px, py, line, W, H) {
+  return pointLineDist(px, py, line.ax * W, line.ay * H, line.bx * W, line.by * H);
+}
+
+/**
+ * Snap-to-edge: project a dragged corner onto the nearest stored edge line
+ * when the pointer is within SNAP_PX of it. Returns the snapped point in
+ * overlay px, or the original point.
+ */
+function snapPoint(px, py, ignoreLine, W, H) {
+  let best = null, bestD = SNAP_PX;
+  for (const line of state.lastLines || []) {
+    if (line === ignoreLine) continue;
+    const d = distToLinePx(px, py, line, W, H);
+    if (d <= bestD) {
+      bestD = d;
+      best = projectOnLine(px, py, line.ax * W, line.ay * H, line.bx * W, line.by * H);
+    }
+  }
+  return best || { x: px, y: py };
+}
+
+el.overlay.addEventListener('pointerdown', (e) => {
+  if (!state.normCorners) return;
+  const p = toOverlayCoords(e);
+  for (let i = 0; i < 4; i++) {
+    const [nx, ny] = state.normCorners[i];
+    const cx = nx * el.overlay.width, cy = ny * el.overlay.height;
+    if (dist2(p.x, p.y, cx, cy) <= (HANDLE_R + 8) ** 2) {
+      state.activeHandle = i;
+      el.overlay.setPointerCapture(e.pointerId);
+      e.preventDefault();
+      drawOverlay();
+      return;
+    }
+  }
+});
+
+el.overlay.addEventListener('pointermove', (e) => {
+  if (state.activeHandle < 0) return;
+  const p = toOverlayCoords(e);
+  const W = el.overlay.width, H = el.overlay.height;
+
+  // Snap to the two edges that DO NOT meet at this corner.
+  const edgeInto = state.lastLines && state.lastLines[state.activeHandle];
+  const edgeOut = state.lastLines && state.lastLines[(state.activeHandle + 3) % 4];
+  let snapped = { x: p.x, y: p.y };
+  const candidates = [edgeInto, edgeOut].filter(Boolean);
+  for (const line of candidates) {
+    const proj = snapPoint(p.x, p.y, line, W, H);
+    if (proj.x !== p.x || proj.y !== p.y) { snapped = proj; break; }
+  }
+
+  state.normCorners[state.activeHandle] = [
+    clamp(snapped.x / W, 0, 1),
+    clamp(snapped.y / H, 0, 1),
+  ];
+  state.cornersEdited = true;
+  drawOverlay();
+});
+
+const endDrag = () => {
+  if (state.activeHandle < 0) return;
+  state.activeHandle = -1;
+  state.cornersEdited = true;
+  drawOverlay();
+};
+el.overlay.addEventListener('pointerup', endDrag);
+el.overlay.addEventListener('pointercancel', endDrag);
+
+/* ------------------------------------------------------------------ *
+ * FAB: confirm crop -> warp in the worker -> result screen
+ * ------------------------------------------------------------------ */
+el.fab.addEventListener('click', onConfirm);
+
+/** Confirm: freeze/ensure a source, derive full-res corners, warp. */
+async function onConfirm() {
+  el.fab.classList.add('busy');
+  setStatus('جاري المعالجة…', 'busy');
+  try {
+    if (state.live) {
+      if (!freezeFrame()) throw new Error('No camera frame yet');
+      stopCamera();
+    }
+    if (!state.sourceCanvas) return;
+
+    // Full-res corners from normalized state (or the whole frame as fallback).
+    const w = state.sourceW, h = state.sourceH;
+    let corners = state.normCorners;
+    if (!corners) {
+      corners = [[0, 0], [w, 0], [w, h], [0, h]];
+    } else {
+      corners = corners.map(([nx, ny]) => [nx * w, ny * h]);
+    }
+
+    const bmp = await createImageBitmap(state.sourceCanvas);
+    const res = await sendToWorker({ type: 'warp', imageBitmap: bmp, corners }, [bmp]);
+    if (!res.imageBitmap) throw new Error('Warp produced no image');
+
+    const page = res.imageBitmap;
+    el.out.width = page.width;
+    el.out.height = page.height;
+    el.out.getContext('2d').drawImage(page, 0, 0);
+    page.close();
+    state.originalResult = el.out.getContext('2d').getImageData(0, 0, el.out.width, el.out.height);
+
+    state.normCorners = null; // allow re-scan on retake
+    showResult();
+  } catch (err) {
+    console.error(err);
+    state.autoCapFired = false; // let auto-capture re-arm if capture failed
+    setStatus('✗ تعذرت المعالجة: ' + err.message, 'warn');
+  } finally {
+    el.fab.classList.remove('busy');
+  }
+}
+
+/** Re-run full-res detection on the frozen source (retake helper). */
+async function onRedetect() {
+  if (!state.sourceCanvas) return;
+  setStatus('جارِ الكشف من جديد…', 'busy');
+  const w = state.sourceW, h = state.sourceH;
+  const scale = Math.min(1, 1000 / Math.max(w, h));
+  const sw = Math.round(w * scale), sh = Math.round(h * scale);
+  const small = document.createElement('canvas');
+  small.width = sw; small.height = sh;
+  small.getContext('2d').drawImage(state.sourceCanvas, 0, 0, sw, sh);
+  const bmp = await createImageBitmap(small);
+  const res = await sendToWorker({ type: 'detect', imageBitmap: bmp }, [bmp]);
+  if (res.corners) {
+    applyCorners(res.corners, sw, sh);
+    setStatus('✓ الإطار محدد', 'ok');
+  } else {
+    setDefaultCorners();
+    setStatus('حدّد الزوايا يدويًا ثم اضغط تأكيد', 'warn');
+  }
+  el.fab.classList.add('ready');
+  drawOverlay();
+}
+
+/* ------------------------------------------------------------------ *
+ * Result screen + enhancement + download
+ * ------------------------------------------------------------------ */
+
+/** Show the result screen. */
+function showResult() {
+  el.stage.hidden = true;
+  el.result.hidden = false;
+}
+
+/** Back to the scan stage (re-open camera if possible). */
+async function goBack() {
+  el.result.hidden = true;
+  el.stage.hidden = false;
+  state.normCorners = null;
+  state.cornersEdited = false;
+  state.sourceCanvas = null;
+  state.autoCapFired = false; // re-arm auto-capture for the next hold
+  resetStability();
+  el.still.hidden = true;
+  el.fab.classList.remove('ready');
+  try {
+    await startCamera();
+  } catch (err) {
+    enterEmptyMode();
+  }
+}
+
+/**
+ * Apply an enhancement preset on the result canvas through the worker.
+ * @param {'original'|'gray'|'contrast'|'clean'|'bw'} preset
+ */
+async function enhanceResult(preset) {
+  const c = el.out;
+  const ctx = c.getContext('2d');
+  const id = ctx.getImageData(0, 0, c.width, c.height);
+  try {
+    const res = await sendToWorker(
+      { type: 'enhance', preset, imageData: { width: id.width, height: id.height, data: id.data } },
+      [id.data.buffer]
+    );
+    const out = new ImageData(res.imageData.data, res.imageData.width, res.imageData.height);
+    ctx.putImageData(out, 0, 0);
+  } catch (err) {
+    console.warn('enhance failed:', err);
+  }
+}
+
+function restoreOriginal() {
+  if (!state.originalResult) return;
+  el.out.getContext('2d').putImageData(state.originalResult, 0, 0);
+}
+
+/** Download the result canvas as a PNG. */
+function downloadResult() {
+  el.out.toBlob((blob) => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'scan-' + Date.now() + '.png';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  }, 'image/png');
+}
+
+/** Send a compressed real crop to Laravel; JPEG avoids browser storage quotas. */
+function saveResult() {
+  el.out.toBlob((blob) => {
+    if (!blob) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (window.parent !== window) {
+        window.parent.postMessage({ type: 'document-scanner:save', image: reader.result }, window.location.origin);
+      } else {
+        downloadResult();
+      }
+    };
+    reader.readAsDataURL(blob);
+  }, 'image/jpeg', 0.92);
+}
+
+/* ------------------------------------------------------------------ *
+ * File input fallback (camera not available)
+ * ------------------------------------------------------------------ */
+el.btnCamera.addEventListener('click', () => el.cameraInput.click());
+el.btnFile.addEventListener('click', () => el.fileInput.click());
+el.btnTopFile.addEventListener('click', () => el.fileInput.click());
+async function loadImageFile(e) {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = async () => {
+    const c = document.createElement('canvas');
+    c.width = img.naturalWidth;
+    c.height = img.naturalHeight;
+    c.getContext('2d').drawImage(img, 0, 0);
+    URL.revokeObjectURL(url);
+    setSource(c);
+    el.empty.hidden = true;
+    await onRedetect();
+  };
+  img.src = url;
+}
+el.cameraInput.addEventListener('change', loadImageFile);
+el.fileInput.addEventListener('change', loadImageFile);
+
+/* ------------------------------------------------------------------ *
+ * Small UI helpers
+ * ------------------------------------------------------------------ */
+
+/** Status chip text + style. */
+function setStatus(text, kind) {
+  el.status.textContent = text;
+  el.status.className = 'status ' + (kind || '');
+}
+
+/** Re-detect toggle + buttons. */
+el.btnDetect.addEventListener('click', () => {
+  el.btnDetect.classList.toggle('on');
+  const on = el.btnDetect.classList.contains('on');
+  el.btnDetect.textContent = on ? '● الكشف التلقائي' : '○ الكشف التلقائي';
+  if (on) {
+    state.cornersEdited = false; // re-arm live detection + auto-capture
+    state.lastDetectAt = 0;
+  } else {
+    resetStability();
+  }
+});
+el.btnRedo.addEventListener('click', onRedetect);
+el.btnBack.addEventListener('click', goBack);
+el.btnOriginal.addEventListener('click', restoreOriginal);
+el.btnClean.addEventListener('click', () => enhanceResult('clean'));
+el.btnColor.addEventListener('click', () => enhanceResult('color'));
+el.btnBw.addEventListener('click', () => enhanceResult('bw'));
+el.btnDownload.addEventListener('click', downloadResult);
+el.btnSave.addEventListener('click', saveResult);
+
+/** Wire everything (called once at load). */
+function bindUI() {
+  // All listeners are attached above; keep this as a no-op hook for clarity.
+}
+
+</script>
+</body>
+</html>

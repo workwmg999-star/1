@@ -11,29 +11,25 @@ use App\Services\SubscriptionLimitService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 
 class DocumentWebController extends Controller
 {
     public function __construct(
         private DocumentStorageService $storageService,
         private SubscriptionLimitService $limitService
-    ) {}
-
-    public function scan(Request $request)
-    {
-        $user = Auth::user()->load('company.plan');
-        $folders = Folder::orderBy('name')->get()->toArray();
-
-        return view('scan', [
-            'folders' => $folders,
-            'user'    => $user->toArray(),
-        ]);
+    ) {
+        $this->middleware('auth');
     }
 
     public function index(Request $request)
     {
-        $user = Auth::user()->load('company.plan');
-        $query = Document::with(['user', 'folder'])->latest();
+        $user    = Auth::user();
+        $company = $user->company;
+
+        $query = Document::where('company_id', $company->id)
+            ->with(['folder', 'user'])
+            ->latest();
 
         if ($request->filled('folder_id')) {
             $query->where('folder_id', $request->folder_id);
@@ -43,17 +39,9 @@ class DocumentWebController extends Controller
             $query->where('file_type', $request->file_type);
         }
 
-        if ($request->filled('search')) {
-            $search = $request->search;
-            $query->where(function ($q) use ($search) {
-                $q->where('title', 'like', "%{$search}%")
-                  ->orWhere('description', 'like', "%{$search}%");
-            });
-        }
-
         $documents = $query->paginate(15);
 
-        $folders = Folder::withCount('documents')
+        $folders = Folder::where('company_id', $company->id)
             ->orderBy('name')
             ->get()
             ->toArray();
@@ -71,8 +59,23 @@ class DocumentWebController extends Controller
                 'total'        => $documents->total(),
             ],
             'folders'       => $folders,
-            'user'          => $user->toArray(),
             'currentFolder' => $currentFolder,
+            'user'          => $user->toArray(),
+        ]);
+    }
+
+    public function scan(Request $request)
+    {
+        $user = Auth::user()->load('company.plan');
+
+        $folders = Folder::where('company_id', $user->company_id)
+            ->orderBy('name')
+            ->get()
+            ->toArray();
+
+        return view('scan', [
+            'folders' => $folders,
+            'user'    => $user->toArray(),
         ]);
     }
 
@@ -88,23 +91,45 @@ class DocumentWebController extends Controller
         $user    = Auth::user();
         $company = $user->company;
 
+        if ($request->filled('folder_id')) {
+            $folderBelongsToCompany = Folder::where('id', $request->folder_id)
+                ->where('company_id', $company->id)
+                ->exists();
+
+            if (!$folderBelongsToCompany) {
+                if ($request->wantsJson()) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'The selected folder is invalid.'
+                    ], 422);
+                }
+                return back()->with('error', 'The selected folder is invalid.');
+            }
+        }
+
         $file     = $request->file('file');
         $fileSize = $file->getSize();
         $mimeType = $file->getMimeType();
         $fileType = str_contains($mimeType, 'pdf') ? 'pdf' : 'image';
 
         if (!$this->limitService->canUploadFile($company, $fileSize)) {
-            if ($request->wantsJson() || $request->ajax()) {
-                return response()->json(['success' => false, 'message' => 'Storage limit exceeded. Please upgrade your subscription plan.'], 402);
+            if ($request->wantsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Storage limit exceeded. Please upgrade.'
+                ], 402);
             }
-            return back()->with('error', 'Storage limit exceeded. Please upgrade your subscription plan.');
+            return back()->with('error', 'Storage limit exceeded.');
         }
 
         if (!$this->limitService->canAddDocument($company)) {
-            if ($request->wantsJson() || $request->ajax()) {
-                return response()->json(['success' => false, 'message' => 'Document count limit reached. Please upgrade your subscription plan.'], 402);
+            if ($request->wantsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Document limit reached. Please upgrade.'
+                ], 402);
             }
-            return back()->with('error', 'Document count limit reached. Please upgrade your subscription plan.');
+            return back()->with('error', 'Document limit reached.');
         }
 
         $doc = DB::transaction(function () use ($request, $user, $company, $file, $fileSize, $mimeType, $fileType) {
@@ -125,64 +150,67 @@ class DocumentWebController extends Controller
 
             $company->incrementStorage($fileSize);
             ActivityLog::log('uploaded', $document, "Uploaded document '{$document->title}'");
+
             return $document;
         });
 
-        if ($request->wantsJson() || $request->ajax()) {
+        if ($request->wantsJson()) {
             return response()->json([
                 'success' => true,
-                'message' => "Document \"{$request->title}\" uploaded successfully!",
-                'data'    => ['id' => $doc->id, 'title' => $doc->title],
+                'message' => "Document \"{$doc->title}\" saved successfully!",
+                'data'    => [
+                    'id'        => $doc->id,
+                    'title'     => $doc->title,
+                    'folder_id' => $doc->folder_id
+                ],
             ], 201);
         }
 
-        return back()->with('success', "Document \"{$request->title}\" uploaded successfully!");
+        return redirect()->route('documents.index')->with('success', "Document \"{$doc->title}\" saved successfully!");
     }
 
-    public function destroy(int $id)
+    public function download($id)
     {
-        $document = Document::findOrFail($id);
-        $company  = Auth::user()->company;
+        $doc = Document::where('company_id', Auth::user()->company_id)->findOrFail($id);
 
-        $totalBytes = $document->size_bytes;
-        $this->storageService->delete($document->file_path);
+        if (Storage::disk('local')->exists($doc->file_path)) {
+            return Storage::disk('local')->download($doc->file_path, $doc->title . '.' . pathinfo($doc->file_path, PATHINFO_EXTENSION));
+        }
 
-        $document->delete();
-        $company->decrementStorage($totalBytes);
+        return back()->with('error', 'File not found in cloud storage.');
+    }
+
+    public function destroy($id)
+    {
+        $doc = Document::where('company_id', Auth::user()->company_id)->findOrFail($id);
+
+        $size = $doc->size_bytes;
+        $company = Auth::user()->company;
+
+        $doc->delete();
+        $company->decrementStorage($size);
 
         return back()->with('success', 'Document deleted successfully.');
     }
 
-    public function download(int $id)
-    {
-        $document = Document::findOrFail($id);
-        $url      = $this->storageService->getUrl($document->file_path);
-
-        return redirect($url);
-    }
-
     public function search(Request $request)
     {
-        $q = $request->q ?? '';
-        $user = Auth::user()->load('company.plan');
+        $q = $request->get('q', '');
+        $company = Auth::user()->company;
 
-        $documents = Document::with(['user', 'folder'])
+        $documents = Document::where('company_id', $company->id)
             ->where(function ($query) use ($q) {
                 $query->where('title', 'like', "%{$q}%")
                       ->orWhere('description', 'like', "%{$q}%");
             })
+            ->with('folder')
             ->latest()
-            ->limit(30)
             ->get()
             ->toArray();
 
-        $folders = Folder::orderBy('name')->get()->toArray();
-
         return view('documents.search', [
-            'documents' => $documents,
             'q'         => $q,
-            'folders'   => $folders,
-            'user'      => $user->toArray(),
+            'documents' => $documents,
         ]);
     }
 }

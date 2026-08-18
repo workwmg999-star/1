@@ -33,8 +33,7 @@ class ScannerPageTest extends TestCase
 
         $response = $this->actingAs($user)->get('/scan');
         $response->assertStatus(200)
-            ->assertSee('High-Definition Document Scanner')
-            ->assertSee('Take Photo with Phone Camera')
-            ->assertSee('Save & Upload to Cloud', false);
+            ->assertSee('ماسح المستندات')
+            ->assertSee('تحديد زوايا المستند');
     }
 }

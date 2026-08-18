@@ -27,8 +27,11 @@ return new class extends Migration
 
             $table->index(['company_id', 'folder_id']);
             $table->index(['company_id', 'created_at']);
-            $table->fullText('title');
+            if (Schema::getConnection()->getDriverName() !== 'sqlite') {
+                $table->fullText('title');
+            }
         });
+
     }
 
     public function down(): void

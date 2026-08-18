@@ -34,8 +34,39 @@ Route::middleware('auth')->group(function () {
     Route::post('/documents', [DocumentWebController::class, 'store'])->name('documents.store');
     Route::delete('/documents/{id}', [DocumentWebController::class, 'destroy'])->name('documents.destroy');
 
-    // Settings
+    // Settings & Management
     Route::get('/profile', [DashboardController::class, 'profile'])->name('profile');
     Route::get('/subscriptions', [DashboardController::class, 'subscriptions'])->name('subscriptions');
     Route::post('/subscriptions', [DashboardController::class, 'subscriptions']);
+
+    // Team, Storage, Notifications
+    Route::get('/team', function () {
+        $user = Auth::user()->load('company.plan');
+        return view('team', ['user' => $user->toArray(), 'company' => $user->company->toArray()]);
+    })->name('team');
+
+    Route::get('/storage', function () {
+        $user = Auth::user()->load('company.plan');
+        return view('storage', ['user' => $user->toArray(), 'company' => $user->company->toArray()]);
+    })->name('storage.index');
+
+    Route::get('/notifications', function () {
+        $user = Auth::user();
+        return view('notifications', ['user' => $user->toArray()]);
+    })->name('notifications.index');
+
+    Route::get('/scan/result', function () {
+        return view('scan-result');
+    })->name('scan.result');
+
+    Route::get('/scan/save', function () {
+        $folders = \App\Models\Folder::where('company_id', Auth::user()->company_id)->get()->toArray();
+        return view('save-document', ['folders' => $folders]);
+    })->name('scan.save');
+
+    Route::get('/documents/{id}', function ($id) {
+        $doc = \App\Models\Document::with('folder')->findOrFail($id);
+        return view('documents.show', ['document' => $doc->toArray()]);
+    })->name('documents.show');
 });
+
